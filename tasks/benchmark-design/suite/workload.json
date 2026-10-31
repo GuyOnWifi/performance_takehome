@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "status": "draft",
+  "seed": 20261030,
+  "model": {
+    "role": "target",
+    "revision": "6a9e13bd6fc8f0983b9b99948120bc37f49c13e9"
+  },
+  "prompt_sets": {
+    "short": { "path": "prompts/short.jsonl", "sha256": "7b5f8d1cac01093ef032c7c85adf24db421c0c643d2b63b2f2672ec8aed18f3f", "input_tokens": 256 },
+    "long": { "path": "prompts/long.jsonl", "sha256": "889c3df27d8de116ec2426544a74f06965d4bf446082c49da2ddd3a0535cdf5b", "input_tokens": 4096 },
+    "long_gen": { "path": "prompts/long_gen.jsonl", "sha256": "2a2007f61f2fb41d8be979100ce048b95c688032007545992525fc3cb5f9790f", "input_tokens": 128 },
+    "prefix": { "path": "prompts/prefix.jsonl", "sha256": "3ae767631a443436fb01044167d2bb946a130ff294f89e580ae7ac0d9382ea08", "input_tokens": 4096 },
+    "anchor": { "path": "prompts/anchor.jsonl", "sha256": "c4b8c6283b2ba741c16b93e342b1532da59e566028ec9201432fbaea121245cd", "input_tokens": 256 },
+    "canary": { "path": "prompts/canary.jsonl", "sha256": "4506398701f2c0fa218e86684b9340922a653991e189e5c3e3e1297aa0c25806", "input_tokens": 21 }
+  },
+  "reference": { "path": null, "sha256": null },
+  "request": {
+    "temperature": 0,
+    "stream": true,
+    "stream_options": { "include_usage": true }
+  },
+  "canary": { "prompt_set": "canary", "max_tokens": 64, "min_output_tokens": 1 },
+  "anchor": { "prompt_set": "anchor", "max_tokens": 128, "min_output_tokens": 1, "passes": 2, "match_chars": 8 },
+  "cells": {
+    "chat_light": {
+      "prompt_mix": { "short": 1.0 },
+      "output": { "max_tokens": 256, "min_output_tokens": 32, "ignore_eos": false },
+      "arrival": { "process": "poisson", "load_fraction": 0.25, "rate_rps": null },
+      "prefix_cache": "miss",
+      "canary_fraction": 0.05,
+      "anchor_fraction": 0.05
+    },
+    "long_prompt": {
+      "prompt_mix": { "long": 1.0 },
+      "output": { "max_tokens": 256, "min_output_tokens": 32, "ignore_eos": false },
+      "arrival": { "process": "poisson", "load_fraction": 0.25, "rate_rps": null },
+      "prefix_cache": "miss",
+      "canary_fraction": 0.05,
+      "anchor_fraction": 0.05
+    },
+    "long_output": {
+      "prompt_mix": { "long_gen": 1.0 },
+      "output": { "max_tokens": 1024, "min_output_tokens": 1024, "ignore_eos": true },
+      "arrival": { "process": "poisson", "load_fraction": 0.25, "rate_rps": null },
+      "prefix_cache": "miss",
+      "canary_fraction": 0.05,
+      "anchor_fraction": 0.05
+    },
+    "near_capacity": {
+      "prompt_mix": { "short": 0.8, "long": 0.2 },
+      "output": { "max_tokens": 256, "min_output_tokens": 32, "ignore_eos": false },
+      "arrival": { "process": "poisson", "load_fraction": 0.75, "rate_rps": null },
+      "prefix_cache": "miss",
+      "canary_fraction": 0.05,
+      "anchor_fraction": 0.05
+    },
+    "prefix_hit": {
+      "prompt_mix": { "prefix": 1.0 },
+      "output": { "max_tokens": 256, "min_output_tokens": 32, "ignore_eos": false },
+      "arrival": { "process": "poisson", "load_fraction": 0.25, "rate_rps": null },
+      "prefix_cache": "hit",
+      "canary_fraction": 0.05,
+      "anchor_fraction": 0.05
+    }
+  },
+  "warmup": { "requests": 20, "prompt_set": "short", "max_duration_s": 300 },
+  "startup": { "poll_interval_s": 0.25, "probe_interval_s": 1.0 },
+  "server_metrics": { "path": "/metrics", "poll_interval_s": 1.0 },
+  "deadlines": {
+    "ttft_prefill_s": 1.0,
+    "decode_s": 0.05,
+    "request_timeout_s": 120,
+    "startup_timeout_s": 900,
+    "drain_timeout_s": 120
+  },
+  "gates": {
+    "max_failed_fraction": 0.01,
+    "max_client_lag_s": 0.05,
+    "max_lagged_fraction": 0.01,
+    "usage_tolerance_tokens": 1,
+    "usage_tolerance_fraction": 0.02,
+    "min_valid_per_quantile": 5,
+    "usage_expected": true,
+    "max_anchor_divergence": null,
+    "min_stable_anchors": 20
+  },
+  "early_stop": {
+    "max_run_failing_requests": 3,
+    "failure_stop_fraction": 0.05,
+    "failure_stop_min_requests": 50
+  },
+  "comparison": {
+    "confidence": 0.95,
+    "margins": { "ttft_log": 0.1, "fluidity_abs": 0.02, "startup_log": 0.1 }
+  },
+  "modes": {
+    "quick": {
+      "cells": ["chat_light", "near_capacity"],
+      "repetitions": 5,
+      "duration_s": 120,
+      "launches": 3,
+      "repetition_layout": "across_launches",
+      "quantiles": [0.5, 0.9],
+      "filesystem_cache": "warm_fs",
+      "max_wall_s": 2400
+    },
+    "full": {
+      "cells": ["chat_light", "long_prompt", "long_output", "near_capacity", "prefix_hit"],
+      "repetitions": 8,
+      "duration_s": 180,
+      "launches": 5,
+      "repetition_layout": "across_launches",
+      "quantiles": [0.5, 0.9, 0.99],
+      "filesystem_cache": "warm_fs",
+      "max_wall_s": 9000
+    }
+  }
+}
