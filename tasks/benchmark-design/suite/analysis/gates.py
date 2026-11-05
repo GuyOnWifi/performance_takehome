@@ -45,6 +45,7 @@ class Stream:
     first_content_t: float | None = None
     finish_reason: str | None = None
     done: bool = False
+    done_t: float | None = None
     usage_tokens: int | None = None
     server_error: bool = False
     protocol_error: bool = False
@@ -72,7 +73,8 @@ def parse_stream(events: list[dict[str, Any]]) -> Stream:
         try:
             event = decode_payload(record["data"])
             if event is None:
-                stream.done = True
+                if not stream.done:
+                    stream.done, stream.done_t = True, record["t"]
                 continue
             deltas = generated_deltas(event)
         except StreamProtocolError as exc:
@@ -153,8 +155,10 @@ def check_request(
     )
     if transport_failed:
         reasons.append("server_error")
-    late = request["t_end"] is not None and (
-        request["t_end"] - request["t_sent"] > deadlines["request_timeout_s"]
+    # Capture listens briefly after [DONE], so a finished request is timed to [DONE].
+    finished = stream.done_t if stream.done_t is not None else request["t_end"]
+    late = finished is not None and (
+        finished - request["t_sent"] > deadlines["request_timeout_s"]
     )
     timed_out = request["client_outcome"] == "timeout" or late
     if timed_out:

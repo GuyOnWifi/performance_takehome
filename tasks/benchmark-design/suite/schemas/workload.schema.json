@@ -94,13 +94,9 @@
       "description": "Capture policy. Stops only on results already decided as invalid.",
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "max_run_failing_requests", "failure_stop_fraction", "failure_stop_min_requests"
-      ],
+      "required": ["max_run_failing_requests"],
       "properties": {
-        "max_run_failing_requests": { "type": "integer", "minimum": 1 },
-        "failure_stop_fraction": { "$ref": "#/$defs/fraction" },
-        "failure_stop_min_requests": { "type": "integer", "minimum": 1 }
+        "max_run_failing_requests": { "type": "integer", "minimum": 1 }
       }
     },
     "warmup": {

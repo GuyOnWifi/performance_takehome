@@ -21,7 +21,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import httpx  # noqa: E402
 from analysis.events import Plan, load_plan  # noqa: E402
-from analysis.gates import INVALID, answers, check_request, parse_stream  # noqa: E402
+from analysis.gates import (  # noqa: E402
+    INVALID,
+    PROBE_TOLERATED,
+    answers,
+    check_request,
+    parse_stream,
+)
 
 CHAT_PATH = "/v1/chat/completions"
 AFTER_DONE_GRACE_S = 1.0
@@ -131,8 +137,9 @@ class EarlyStop:
     """Stops only on outcomes that already make the run invalid. See STATES.md."""
 
     config: dict[str, Any]
+    max_failed_fraction: float
+    planned: dict[str, int]
     run_failing: int = 0
-    seen: Counter = field(default_factory=Counter)
     failed: Counter = field(default_factory=Counter)
 
     def observe(self, result: Any) -> str | None:
@@ -142,10 +149,9 @@ class EarlyStop:
             if self.run_failing >= self.config["max_run_failing_requests"]:
                 reason = next(r for r in result.reasons if r not in ("client_lag",))
                 return f"early_stop:{reason}"
-        self.seen[cell] += 1
         self.failed[cell] += result.state == INVALID
-        enough = self.seen[cell] >= self.config["failure_stop_min_requests"]
-        if enough and self.failed[cell] / self.seen[cell] > self.config["failure_stop_fraction"]:
+        # The cell's judged population can't exceed its plan, so this already fails the gate.
+        if self.failed[cell] > self.max_failed_fraction * self.planned[cell]:
             return "early_stop:failure_rate"
         return None
 
@@ -172,14 +178,18 @@ class Recorder:
 
 
 class Capture:
-    def __init__(self, plan: Plan, recorder: Recorder, base_url: str):
+    def __init__(
+        self, plan: Plan, recorder: Recorder, base_url: str, planned: dict[str, int] | None = None
+    ):
         self.plan = plan
         self.data = plan.data
         self.rec = recorder
         self.url = base_url.rstrip("/")
         self.model_id: str | None = None
         self.client = httpx.AsyncClient(trust_env=False, timeout=None)
-        self.stop = EarlyStop(self.data["early_stop"])
+        self.stop = EarlyStop(
+            self.data["early_stop"], self.data["gates"]["max_failed_fraction"], planned or {}
+        )
         self.abort: str | None = None
 
     def body(self, spec: Spec) -> dict[str, Any]:
@@ -294,7 +304,8 @@ class Capture:
                         config["min_output_tokens"], is_canary=True)
             sent = await self.send(spec, "probe", launch, self.rec.now())
             result = check_request(sent["record"], sent["events"], [], self.plan)
-            if {"tokens_missing"} == set(result.reasons) or not result.reasons:
+            # Tokens are counted after capture, so match evaluate.py's probe rule without them.
+            if (PROBE_TOLERATED | {"tokens_missing"}).issuperset(result.reasons):
                 return True
             await asyncio.sleep(self.data["startup"]["probe_interval_s"])
         return False
@@ -442,7 +453,8 @@ async def run_capture(args) -> int:
         planned[cell][str(rep)] = len(items)
     manifest = _manifest(args, plan, mode, dict(planned))
     recorder = Recorder(args.out)
-    capture = Capture(plan, recorder, args.base_url)
+    totals = {cell: sum(counts.values()) for cell, counts in planned.items()}
+    capture = Capture(plan, recorder, args.base_url, totals)
     server = Server(args.start_cmd, args.stop_cmd)
     try:
         for launch, dealt in enumerate(windows):

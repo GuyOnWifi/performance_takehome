@@ -169,7 +169,7 @@ healthy run always completes its full plan, and a good result never stops a run 
 | --- | --- |
 | Server crash, or no valid startup probe by `startup_timeout_s` | Stop immediately |
 | `max_run_failing_requests` requests with a run-failing reason | Stop |
-| In one cell, at least `failure_stop_min_requests` requests and over `failure_stop_fraction` failed | Stop |
+| In one cell, failures exceed `max_failed_fraction` of the cell's planned requests | Stop |
 
 `reference_mismatch` never triggers a stop, because it's a rate that needs the whole run.
 `false_usage` can't trigger one either, because capture doesn't tokenize during a run, which keeps

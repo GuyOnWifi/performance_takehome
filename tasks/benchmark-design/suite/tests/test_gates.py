@@ -166,6 +166,21 @@ class StreamTests(unittest.TestCase):
         self.assertEqual(result.reasons, ("server_error",))
         self.assertIsNotNone(result.ttft_s)
 
+    def test_listening_after_done_is_not_a_timeout(self):
+        model = build_model(1)
+        spec = next(s for s in model.measured if s.is_plain)
+        plan = load_plan_for(model)
+        limit = plan.data["deadlines"]["request_timeout_s"]
+        sent = spec.record["t_sent"]
+        events = [{"seq": 0, "t": sent + limit - 0.5,
+                   "data": json.dumps({"choices": [{"delta": {"content": "hi"},
+                                                    "finish_reason": "stop"}]})},
+                  {"seq": 1, "t": sent + limit - 0.5, "data": "[DONE]"}]
+        request = {**spec.record, "t_end": sent + limit + 0.5}
+        self.assertNotIn("timed_out", check_request(request, events, [], plan).reasons)
+        request = {**spec.record, "t_end": sent + limit + 0.5}
+        self.assertIn("timed_out", check_request(request, events[:1], [], plan).reasons)
+
 
 def load_plan_for(model):
     with tempfile.TemporaryDirectory() as directory:

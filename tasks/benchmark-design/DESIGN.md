@@ -79,7 +79,10 @@ answers arithmetic correctly under load. Reasoning output often opens the same w
 8-character check mostly catches placeholders. A server that generates everything, then releases
 tokens at a steady pace, can't be told apart from true streaming, though its cost appears in TTFT.
 
-Fail-fast stops capture only when a run is already certain to be `invalid`. Healthy runs always finish,
+Fail-fast stops capture only when a run is already certain to be `invalid`: a crash, a failed
+startup, three run-failing requests, or failures in one cell above 1% of that cell's *planned*
+requests. An earlier rule stopped at 5% of the first 50, which a large cell could still recover
+from, so it was replaced. Healthy runs always finish,
 so there is no bias from stopping on good results. `false_usage` can't trigger it, because capture
 doesn't tokenize during a run. Such a run is still `invalid`, but costs its full duration.
 
@@ -154,7 +157,10 @@ negative. Those cases mostly return `inconclusive` or `equivalent`. Full-mode se
 simulated.
 
 **Real LLMD:** Qwen3-0.6B on the RTX 3060, 3 launches, 2 cells, 3 repetitions of 60 s, 676 requests per
-run. `near_capacity` ran close to overload here, so its wide intervals say little about the design.
+run. These runs used `artifacts/debug-cuda/workload.debug.json`, written by `tests/e2e/e2e_cuda.py`,
+which sets values the committed plan leaves null or pins higher: `rate_rps` 2.0 and 1.5,
+`max_anchor_divergence` 0.1 and `min_stable_anchors` 10. The committed `workload.json` would score
+the same evidence `inconclusive` (`divergence_unmeasured`). `near_capacity` ran close to overload here, so its wide intervals say little about the design.
 
 | Run | State | Failed | Anchors diverged | TTFT p90 `chat_light` | Against `clean_a` |
 | --- | --- | --- | --- | --- | --- |
@@ -238,7 +244,7 @@ python tests/e2e/e2e_cuda.py --out <dir> --model-dir <Qwen3-0.6B directory>
 
 | Identity | Value |
 | --- | --- |
-| `workload.json` SHA-256 | `175f2c447a7e63c5163f2607f373f541fca2f08acf5b27d437beb0c8e085e98e` |
+| `workload.json` SHA-256 | `6cb480c5f165fb31c6cf1494186ab9877a7bdb109a9e888cd7a67efb46214d22` |
 | Seed | 20261030 |
 | Debug image | `zmlai/llmd@sha256:752fc2a8a50971a14d2035e653c6c8ddf672d257b3cfed7eb43f216a123bda7c` |
 | Debug model | `Qwen/Qwen3-0.6B`, revision `c1899de289a04d12100db370d81485cdf75e47ca` |

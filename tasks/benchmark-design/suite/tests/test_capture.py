@@ -86,26 +86,29 @@ class ScheduleTests(unittest.TestCase):
     def test_early_stop_triggers_only_on_decided_failures(self):
         from collect.capture import EarlyStop
 
-        config = {"max_run_failing_requests": 3, "failure_stop_fraction": 0.05,
-                  "failure_stop_min_requests": 50}
+        config = {"max_run_failing_requests": 3}
 
         def result(state, reasons=(), failing=False):
             return SimpleNamespace(request={"cell": "a"}, state=state, reasons=reasons,
                                    run_failing=failing)
 
-        stop = EarlyStop(config)
+        stop = EarlyStop(config, 0.01, {"a": 300})
         for _ in range(200):
             self.assertIsNone(stop.observe(result("valid")))
-        stop = EarlyStop(config)
+        stop = EarlyStop(config, 0.01, {"a": 300})
         self.assertIsNone(stop.observe(result("invalid", ("wrong_output",), True)))
         self.assertIsNone(stop.observe(result("invalid", ("wrong_output",), True)))
         self.assertEqual(stop.observe(result("invalid", ("wrong_output",), True)),
                          "early_stop:wrong_output")
-        stop = EarlyStop(config)
-        outcomes = [stop.observe(result("invalid", ("server_error",))) for _ in range(50)]
-        self.assertEqual(outcomes[-1], "early_stop:failure_rate")
-        self.assertIsNone(outcomes[-2])
-
+        # 3 early failures in a 300-request cell can still end under 1%, so no stop.
+        stop = EarlyStop(config, 0.01, {"a": 300})
+        outcomes = [stop.observe(result("invalid", ("server_error",))) for _ in range(4)]
+        self.assertEqual(outcomes[:3], [None, None, None])
+        self.assertEqual(outcomes[3], "early_stop:failure_rate")
+        # Excluded requests are never charged.
+        stop = EarlyStop(config, 0.01, {"a": 300})
+        for _ in range(10):
+            self.assertIsNone(stop.observe(result("inconclusive", ("client_lag",))))
 
 if __name__ == "__main__":
     unittest.main()

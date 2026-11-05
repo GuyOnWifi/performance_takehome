@@ -86,9 +86,7 @@
     "min_stable_anchors": 20
   },
   "early_stop": {
-    "max_run_failing_requests": 3,
-    "failure_stop_fraction": 0.05,
-    "failure_stop_min_requests": 50
+    "max_run_failing_requests": 3
   },
   "comparison": {
     "confidence": 0.95,
