@@ -184,9 +184,11 @@ def check_request(
     count = len(tokens) + stream.hidden_tokens
     tolerance = max(gates["usage_tolerance_tokens"],
                     math.ceil(gates["usage_tolerance_fraction"] * count))
-    if count < request["min_output_tokens"] or (
-        stream.finish_reason == "length"
-        and count + tolerance < request["max_tokens"]
+    # Retokenized text can fall a few tokens short, so every length floor gets the tolerance.
+    # With ignore_eos the server must generate max_tokens, so stopping early is truncation.
+    full = stream.finish_reason == "length" or request.get("ignore_eos")
+    if count + tolerance < request["min_output_tokens"] or (
+        full and count + tolerance < request["max_tokens"]
     ):
         reasons.append("truncated_output")
     if stream.usage_tokens is None:

@@ -45,7 +45,8 @@ Applies to `phase=measure` and `phase=probe`. Warmup requests are excluded.
 - At least one generated token, from `reasoning_content` or `content`.
 - `finish_reason` is `stop` or `length`, and `[DONE]` was received.
 - `length` means the independent token count reached `max_tokens`.
-- Token count meets `min_output_tokens`.
+- Token count meets `min_output_tokens`, and reaches `max_tokens` when `ignore_eos` is set. Both floors
+  allow the usage tolerance, because retokenizing can fall a few tokens short.
 - Output passes correctness.
 - Reported usage is within the larger of `usage_tolerance_tokens` and `usage_tolerance_fraction` of
   the independent count, because retokenized text can merge tokens (up to 3 of 256 on real LLMD).
@@ -64,7 +65,7 @@ exact-output checks are only reliable as a rate (see below).
 | Non-200, connection reset, or error event | `invalid` | `server_error` | Failed: FI=0, TTFT censored if no token | No |
 | No generated token | `invalid` | `empty_output` | Failed: FI=0, TTFT censored | No |
 | Stream ended without `[DONE]` or finish reason | `invalid` | `incomplete_stream` | Failed: FI=0 | No |
-| `length` below `max_tokens`, or below `min_output_tokens` | `invalid` | `truncated_output` | Failed: FI=0 | No |
+| `length` or `ignore_eos` below `max_tokens`, or below `min_output_tokens`, beyond the tolerance | `invalid` | `truncated_output` | Failed: FI=0 | No |
 | Past `request_timeout_s` | `invalid` | `timed_out` | Failed: FI=0, TTFT censored if no token | No |
 | Canary wrong, or stray U+FFFD in the output | `invalid` | `wrong_output` | Failed | **Yes** |
 | Usage disagrees with independent count | `invalid` | `false_usage` | Failed | **Yes** |

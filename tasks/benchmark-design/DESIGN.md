@@ -14,16 +14,25 @@ score, because a fast server with stalls and a slow server with smooth output ar
 
 | Cell | Prompts | Output | Load | What it exposes |
 | --- | --- | --- | --- | --- |
-| `chat_light` | 256 tokens | Up to 256 | 25% of capacity | Baseline TTFT and smoothness with no queueing |
-| `long_prompt` | 4096 tokens | Up to 256 | 25% of capacity | Delayed prefill, which fast decode averages would hide |
+| `chat_light` | 256 tokens | Exactly 256 | 25% of capacity | Baseline TTFT and smoothness with no queueing |
+| `long_prompt` | 4096 tokens | Exactly 256 | 25% of capacity | Delayed prefill, which fast decode averages would hide |
 | `long_output` | 128 tokens | Exactly 1024, `ignore_eos` | 25% of capacity | Decode stalls and use of slack |
-| `near_capacity` | 80% short, 20% long | Up to 256 | 75% of capacity | Queueing, drops and unfair scheduling |
-| `prefix_hit` | 4096 tokens, shared prefix | Up to 256 | 25% of capacity | Prefix-cache behavior |
+| `near_capacity` | 80% short, 20% long | Exactly 256 | 75% of capacity | Queueing, drops and unfair scheduling |
+| `prefix_hit` | 4096 tokens, shared prefix | Exactly 256 | 25% of capacity | Prefix-cache behavior |
 
 Arrivals are seeded Poisson, because bursts are what real clients send, and a closed loop would hide
 queueing by slowing down with the server. Rates are set as a share of measured capacity, so they
-remain meaningful on any hardware. `long_output` uses `ignore_eos` so that decode length doesn't
-depend on when the model chooses to stop.
+remain meaningful on any hardware. Every cell uses `ignore_eos`, so output length is set by the plan,
+not by when the model chooses to stop. Without it, a model or engine change that writes shorter
+answers would look like a speedup, and two runs wouldn't do the same work. A request that stops before
+`max_tokens` is `truncated_output`, which also catches a server that ignores the flag. Canaries,
+anchors and startup probes keep natural stopping, because their answers are read from the text.
+
+Prompts are real text, not random token IDs, because speculative decoding's acceptance rate depends
+on content, and random input would understate a server that drafts. ShareGPT was considered and
+rejected: it can't fill 4096-token prompts, its licence is unclear, and it would add a large download
+to reproduction. The repository's text leans toward code and documentation, which drafts predict well,
+so if the engine speculates, these prompts may flatter it.
 
 Omitted: multi-turn conversations, tool calls, multi-GPU serving, and prompts over 4096 tokens. Prompts
 are built from this repository's documents and code, so they're less realistic than real chat
@@ -70,7 +79,7 @@ Real LLMD changed four rules that the fake server had let pass:
 | --- | --- | --- |
 | Canary text equals the answer | 0 of 120 passed, because the model shows its working | The last number must match; canaries the model gets wrong in the reference run are never sent |
 | Usage equals the streamed token count | `usage` includes `<think>` tags that are never streamed | Hidden tags are added to the count |
-| Usage within 1 token | Retokenizing fell short by up to 3 of 256 tokens | Tolerance is the larger of 1 token or 2% |
+| Usage within 1 token | Retokenizing fell short by up to 3 of 256 tokens | Tolerance is the larger of 1 token or 2%, applied to usage and to every length floor |
 | Anchor text equals the reference | Fresh sequential: 24 of 24 matched. With or after concurrent traffic: 7 to 19 of 24 | First 8 characters, finish reason and at least half the reference length |
 
 Because the anchor rule is weaker, a server returning plausible wrong text with the right opening and
@@ -168,6 +177,13 @@ the same evidence `inconclusive` (`divergence_unmeasured`). `near_capacity` ran 
 | `clean_b` | `valid` | 0 | 0 of 41 | 42 ms | Fluidity `equivalent`; TTFT and startup `inconclusive`; no false regression |
 | `--batch-size=1` | `valid` | 0 | 0 of 41 | 59.7 s | TTFT `regression` on both cells; fluidity `regression` on `chat_light`, `inconclusive` on `near_capacity`; startup `inconclusive` |
 
+**After `ignore_eos` on every cell:** the same debug plan was re-run as an A/A pair, with evidence in
+`tasks/benchmark-design/artifacts/debug-cuda-eos/`. LLMD honours the flag: a 200-token request
+stopped at 119 tokens without it, and returned 200 with `finish_reason=length` with it. Both runs
+were `valid`, with 676 of 676 requests completed, 0 failed and 0 truncated. Against `clean_a`, fluidity
+on `chat_light` was `equivalent`, and every other decision was `inconclusive`, with no false
+regression. TTFT p90 on `chat_light` was 41 and 43 ms. Each run took 411 s.
+
 The degraded run is a real engine setting, not an injected fault. Startup took about 6 s and wasn't
 expected to change.
 
@@ -244,7 +260,7 @@ python tests/e2e/e2e_cuda.py --out <dir> --model-dir <Qwen3-0.6B directory>
 
 | Identity | Value |
 | --- | --- |
-| `workload.json` SHA-256 | `6cb480c5f165fb31c6cf1494186ab9877a7bdb109a9e888cd7a67efb46214d22` |
+| `workload.json` SHA-256 | `6f11ec437be7488d158175f89538c0b92c5bad20d53fb16302a03f07ef918534` |
 | Seed | 20261030 |
 | Debug image | `zmlai/llmd@sha256:752fc2a8a50971a14d2035e653c6c8ddf672d257b3cfed7eb43f216a123bda7c` |
 | Debug model | `Qwen/Qwen3-0.6B`, revision `c1899de289a04d12100db370d81485cdf75e47ca` |

@@ -49,6 +49,8 @@ def main() -> int:
     parser.add_argument("--model-dir", type=Path, required=True)
     parser.add_argument("--only", nargs="*", default=list(SCENARIOS))
     args = parser.parse_args()
+    # The debug plan stores these paths, and plan paths resolve against the plan's directory.
+    args.out, args.model_dir = args.out.resolve(), args.model_dir.resolve()
     args.out.mkdir(parents=True, exist_ok=True)
     workload = debug_plan(args.out)
     capture = [sys.executable, str(SUITE / "collect" / "capture.py")]

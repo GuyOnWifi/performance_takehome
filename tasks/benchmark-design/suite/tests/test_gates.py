@@ -166,6 +166,28 @@ class StreamTests(unittest.TestCase):
         self.assertEqual(result.reasons, ("server_error",))
         self.assertIsNotNone(result.ttft_s)
 
+    def test_ignore_eos_length_floor(self):
+        model = build_model(1)
+        spec = next(s for s in model.measured if s.is_plain)
+        plan = load_plan_for(model)
+        sent = spec.record["t_sent"]
+
+        def reasons(count, finish):
+            events = [{"seq": 0, "t": sent + 1,
+                       "data": json.dumps({"choices": [{"delta": {"content": "x" * count},
+                                                        "finish_reason": finish}],
+                                           "usage": {"completion_tokens": count}})},
+                      {"seq": 1, "t": sent + 1, "data": "[DONE]"}]
+            tokens = [{"t": sent + 1, "channel": "content"}] * count
+            request = {**spec.record, "max_tokens": 1024, "min_output_tokens": 1024,
+                       "ignore_eos": True}
+            return check_request(request, events, tokens, plan).reasons
+
+        # Retokenizing can fall 2% short of a full generation without truncating it.
+        self.assertNotIn("truncated_output", reasons(1010, "length"))
+        # A server that ignores ignore_eos and stops early is truncated.
+        self.assertIn("truncated_output", reasons(300, "stop"))
+
     def test_listening_after_done_is_not_a_timeout(self):
         model = build_model(1)
         spec = next(s for s in model.measured if s.is_plain)
