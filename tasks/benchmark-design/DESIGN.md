@@ -239,12 +239,14 @@ python collect/sweep.py --workload workload.json --base-url http://127.0.0.1:800
 | MI355X image            | `zmlai/llmd@sha256:0a2cd01a2e53c78934a8cfef66f8668da7666be4954a5d18b72df089c54ea34f` |
 | MI355X model            | `Qwen/Qwen3.6-27B`, revision `6a9e13bd6fc8f0983b9b99948120bc37f49c13e9`              |
 | Prompt tokenizer        | `Qwen/Qwen3-8B`, revision `b968826d9c46dd6066d109eabc6255188de91218`                 |
+| Output tokenizer        | The model's own: `Qwen/Qwen3.6-27B` at the revision above                            |
 
 **Evidence** is in `evidence/`, with checksums in `SHA256SUMS`.
 
 | Path            | Contents                                                                |
 | --------------- | ----------------------------------------------------------------------- |
 | `mi355x-full/`  | Raw results, plan, reference, `report.json` and run scripts             |
+| `mi355x-fill/`  | A short check of the window rule on the three slowest cells             |
 | `synthetic/`    | Output of `tests/matrix.py` and `tests/sensitivity.py`                  |
 | `analysis/`     | `calibrate.py` (margin table) and `rules_mi355x.py` (correctness rules) |
 | `daytona/`      | Sandbox driver and watcher, no credentials                              |
@@ -258,11 +260,12 @@ E=tasks/benchmark-design/evidence S=tasks/benchmark-design/suite R=rescore
 mkdir -p $R && tar xzf $E/mi355x-full/results.tgz -C $R
 ln -s "$PWD/$S/prompts" $R/out/prompts
 python $S/collect/tokenize_events.py --events $R/out/full \
-  --repository Qwen/Qwen3-8B --revision b968826d9c46dd6066d109eabc6255188de91218
+  --repository Qwen/Qwen3.6-27B --revision 6a9e13bd6fc8f0983b9b99948120bc37f49c13e9
 python $S/evaluate.py --events $R/out/full --workload $R/out/workload.mi355x.json --out report.json
 ```
 
-The plan needs `prompts/` beside it, or canary answers are missing and the run scores `invalid`.
+This reproduces the committed `report.json` exactly, token file included. The plan needs `prompts/`
+beside it, or canary answers are missing and the run scores `invalid`.
 
 **Stand-ins:** the organizer's runner, schemas and token adapter weren't released, so
 `collect/capture.py` and `schemas/` are our own. `evaluate.py` only depends on the event format in
