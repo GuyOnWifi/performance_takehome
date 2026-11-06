@@ -14,9 +14,9 @@ We test with the following workloads:
 | `near_capacity` | 80% short, 20% long        | Exactly 256                | 75% of capacity          | Queueing, drops and unfair scheduling                                       |
 | `prefix_hit`    | 4096 tokens, shared prefix | Exactly 256                | 25% of capacity          | Prefix-cache behavior                                                       |
 
-Arrivals are sampled from a seeded gamma distribution to simulate the real world burst workloads.
+Arrivals are seeded Poisson, so requests arrive randomly at a steady average rate, like real traffic.
 
-We also have and addition `bursty` workload, which is `chat_light` with gamma gaps of shape 0.25 for bigger clumps, to test how server smooths spikes. Every cell uses `ignore_eos`, so output length is set by the plan,
+We also have an additional `bursty` workload, which is `chat_light` with gamma gaps of shape 0.25 for bigger clumps, to test how the server smooths spikes. Every cell uses `ignore_eos`, so output length is set by the plan,
 not by when the model chooses to stop. Without it, a model or engine change that writes shorter
 answers would look like a speedup. A request that stops before
 `max_tokens` is `truncated_output`, which also catches a server that ignores the flag. Canaries,
@@ -63,13 +63,15 @@ An `invalid` beats `inconclusive`, which beats `valid`. Client-observed times an
 are trusted as the measurement. Everything the server claims is checked independently.
 
 **Correctness uses two checks.** Canaries are seeded arithmetic prompts ("What is 5 + 5") to check for garbage outputs.
+Anchors are fixed prompts compared with a reference answer from the same model: the first 8 characters,
+the finish reason and at least half the length must match.
 
-Canaries are the remaining defense, and they only show that the server
-answers arithmetic correctly under load. Reasoning output often opens the same way, so the
-8-character check mostly catches placeholders. A server that generates everything, then releases
+Anchors are loose because reasoning output often opens the same way, so they mostly catch placeholders.
+Canaries are the stronger check, but they only show that the server answers arithmetic correctly under
+load. A server that generates everything, then releases
 tokens at a steady pace, can't be told apart from true streaming, though its cost appears in TTFT.
 
-**The benchmark is fail-fast, to avoid extensive testing when something is guaranteed `invalid`**. This helps benchmarks stay fast when continuing ttesting would produce no useful output. Healthy runs always finish.
+**The benchmark is fail-fast, to avoid extensive testing when something is guaranteed `invalid`**. This helps benchmarks stay fast when continuing testing would produce no useful output. Healthy runs always finish.
 
 ## Statistical policy
 
