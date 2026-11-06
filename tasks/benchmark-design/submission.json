@@ -4,7 +4,7 @@
   "status": "submission",
   "source": {
     "repository": "https://github.com/GuyOnWifi/performance_takehome",
-    "commit": "81fde326283419357c60f5b690a3b5eec6a1f7b2"
+    "commit": "b943529cacae91a564ba8c69a74a8a9a98e7621d"
   },
   "suite": {
     "entrypoint": "tasks/benchmark-design/suite/evaluate.py",
