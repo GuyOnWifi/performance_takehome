@@ -56,6 +56,19 @@ class ScheduleTests(unittest.TestCase):
         self.assertAlmostEqual(sum(s.is_canary for s in specs) / len(specs), 0.05, delta=0.02)
         self.assertAlmostEqual(sum(s.is_anchor for s in specs) / len(specs), 0.05, delta=0.02)
 
+    def test_windows_lengthen_until_quantiles_are_powered(self):
+        from collect.capture import build_window, window_minimum
+
+        data, prompts = plan_data()
+        data["gates"] = {"min_valid_per_quantile": 5}
+        # The per-repetition p90 needs 50; a pooled p99 over 8 repetitions needs 500/8 each.
+        self.assertEqual(window_minimum(data, {"quantiles": [0.5, 0.9], "repetitions": 2}), 53)
+        self.assertEqual(window_minimum(data, {"quantiles": [0.5, 0.9, 0.99], "repetitions": 8}), 66)
+        short = build_window(data, prompts, "a", 0, 2)
+        long = build_window(data, prompts, "a", 0, 2, 53)
+        self.assertEqual(long[:len(short)], short)
+        self.assertEqual(sum(not (s.is_canary or s.is_anchor) for s in long), 53)
+
     def test_only_plain_miss_prompts_get_a_unique_prefix(self):
         from collect.capture import build_window
 

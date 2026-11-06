@@ -477,6 +477,8 @@ def _manifest(args, plan: Plan, mode: dict, planned: dict) -> dict[str, Any]:
 
 async def run_capture(args) -> int:
     plan = load_plan(args.workload)
+    if args.mode not in plan.data["modes"]:
+        raise SystemExit(f"mode {args.mode!r} is not in {args.workload}")
     mode = plan.data["modes"][args.mode]
     prompts = Prompts(plan.data, args.workload.parent, plan.reference)
     windows = layout(plan.data, mode)
@@ -569,7 +571,7 @@ def main() -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     run = commands.add_parser("run")
     run.add_argument("--workload", type=Path, required=True)
-    run.add_argument("--mode", choices=("quick", "full"), required=True)
+    run.add_argument("--mode", required=True, help="a mode in the plan: quick, full or a targeted one")
     run.add_argument("--out", type=Path, required=True)
     run.add_argument("--start-cmd", required=True, help="foreground server command")
     run.add_argument("--stop-cmd")
