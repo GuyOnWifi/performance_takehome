@@ -130,7 +130,8 @@ on one cell.
 | Quantiles | p50, p90 | p50, p90, p99 |
 
 **Quantiles** are reported only when `n(1-q) >= 5`, so p99 needs 500 requests. Below that, it's close
-to the maximum, and the result is `quantile_underpowered`.
+to the maximum, and the result is `quantile_underpowered`. On the MI355X this left three of the six
+full-mode cells underpowered (see the validation matrix).
 
 **Comparison** uses log p90 per repetition, mean fluidity per repetition and log startup per launch.
 Each gets a Welch t-interval with a Bonferroni adjustment across the mode's primary comparisons. A
@@ -155,7 +156,7 @@ tighten this, but it needs real A/A data before being adopted.
 
 ## Validation matrix
 
-All results below are debug or synthetic evidence, never MI355X validation.
+Everything below is synthetic or debug evidence, except the single MI355X run at the end.
 
 **Synthetic faults:** 47 families land in their expected state with 0 mismatches
 (`suite/tests/matrix.py`). They cover bursts, stalls, late first tokens, reasoning channels, Unicode
@@ -204,6 +205,41 @@ expected to change.
 Wrong answers stopped at 48 s and a crash at 13 s, both `invalid`. False usage and slow TTFT last ran
 before the out-of-scope checks were removed, when they were caught as `invalid` and `regression`.
 
+**MI355X, one full-mode run:** `zmlai/llmd@sha256:0a2cd01a…` started with only `--io-impl=zio
+--model=…`, Qwen3.6-27B, warm filesystem cache, in a Daytona on-demand sandbox. `collect/sweep.py` set
+the rates: closed-loop capacity with 32 requests in flight, times each cell's load share. All 4062
+planned requests completed and none failed, 1 of 207 anchor checks diverged, and startup was `valid`.
+The run is `inconclusive` because three cells are `quantile_underpowered`.
+
+| Cell | Capacity | Rate | Counted | TTFT p90 | Fluidity | FTGR | State |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `chat_light` | 3.33 rps | 0.831 rps | 690 | 116 ms (109–123) | 1.000 | 55.3 tok/s | `valid` |
+| `bursty` | 3.33 rps | 0.831 rps | 805 | 181 ms (157–209) | 1.000 | 53.6 tok/s | `valid` |
+| `long_prompt` | 1.38 rps | 0.346 rps | 270 | 1548 ms (1306–1836) | 0.963 | 19.7 tok/s | `inconclusive` |
+| `long_output` | 0.90 rps | 0.225 rps | 213 | 62 ms (57–66) | 1.000 | 56.2 tok/s | `inconclusive` |
+| `near_capacity` | 2.15 rps | 1.616 rps | 1407 | 2223 ms (1180–4186) | 0.968 | 14.9 tok/s | `valid` |
+| `prefix_hit` | 1.33 rps | 0.333 rps | 300 | 1537 ms (1440–1640) | 0.976 | 21.6 tok/s | `inconclusive` |
+
+Startup was 37.2 s (31.6–43.7) over 4 launches, ranging from 35.3 to 38.6 s.
+
+What the cells showed:
+
+- At the same mean rate as `chat_light`, bursts raised TTFT p90 by 56% and left fluidity unchanged.
+- At 75% of capacity, queueing pushed TTFT p90 past 2 s, with a wide interval.
+- `prefix_hit` and `long_prompt` send prompts of the same length. Their TTFT and capacity matched, so
+  the shared prefix gave no measurable gain with LLMD's defaults. Whether the default build caches
+  prefixes at all wasn't checked.
+
+**The underpowered cells are a design gap.** The power rule needs 50 counted requests per repetition
+for the per-repetition p90, and 500 per cell for p99. At 25% of capacity in 120 s windows,
+`long_output` got 22–33 per repetition, `long_prompt` 28–43 and `prefix_hit` 30–51. Setting rates from
+capacity keeps load comparable across hardware, but the sample count then falls with capacity, and
+the fixed window doesn't make up for it. Quick mode's two cells had at least 75 and 159 per repetition
+here, so they are powered.
+
+There's no MI355X A/A yet, so `max_anchor_divergence` stays at the provisional 0.1 from the 3060. The
+observed divergence was 0.5%.
+
 **Limitations:** only one real degradation has been tested. Real faults on the MI355X will be limited
 to what can be produced without changing the engine, so most fault coverage stays synthetic. The real
 A/A pair is a single sample, not a false-positive rate. Fake-server results are never validation
@@ -213,17 +249,23 @@ evidence.
 
 ## Measured compute cost
 
-Measured on the debug plan only. This says nothing about the target, whose load and compile time could
-be far longer.
+The debug plan on the 3060, and one full run on the MI355X:
 
 | Run | Wall time | Launch | Warmup | Requests | Drain | Cleanup |
 | --- | --- | --- | --- | --- | --- | --- |
 | `clean_a` | 403 s | 17 s | 18 s | 357 s | 8 s | 2 s |
 | `clean_b` | 403 s | 18 s | 18 s | 357 s | 8 s | 2 s |
 | `--batch-size=1` | 759 s | 17 s | 17 s | 357 s | 366 s | 2 s |
+| MI355X full | 6265 s | 149 s | 98 s | 5675 s | 338 s | 3 s |
 
 The degraded run shows why drain is measured: overload doubled the run's cost, all of it after the
 request windows ended.
+
+The MI355X full run took 1.74 GPU-hours, inside the plan's 2.5 h limit. Each launch took about 37 s,
+with the model in a warm page cache. New hardware also needs a one-off setup before its first run:
+19 s to download the model, 844 s for the reference and 476 s for the capacity sweep. The reference
+ran its canaries one at a time; they now run 16 at once. Using the same launch, warmup and drain
+times, quick mode would take about 25 minutes, or 0.4 GPU-hours.
 
 Planned request time, excluding every other phase:
 
@@ -232,14 +274,13 @@ Planned request time, excluding every other phase:
 | Quick | 2 × 5 × 120 s = 20 min | 40 min |
 | Full | 6 × 8 × 120 s = 96 min | 2.5 h, inside the 3 h ceiling |
 
-Full mode leaves about an hour of the 3 h ceiling for what hasn't been measured on the target:
-four launches of a 27B model, which may each take minutes, and drains, which a slowed server can
-stretch from seconds to minutes. Repetitions were kept at 8 because they set the interval width;
-the shorter window costs requests per repetition, so p99 is more often underpowered and is
-reported as such.
+Full mode leaves about an hour of the 3 h ceiling for what hasn't been measured on the target: four
+launches of a 27B model, which may each take minutes, and drains, which a slowed server can stretch
+from seconds to minutes. On the MI355X, launches, warmup and drain came to 10 minutes. Repetitions
+were kept at 8 because they set the interval width; the shorter window costs requests per repetition.
+On the MI355X that left three full-mode cells `inconclusive`, as described in the validation matrix.
 
-**Pending:** measured quick and full cost on the MI355X. That the full plan fits is a calculation
-until then, not a result. No GPU-hours have been used against the 12-hour allowance.
+**Pending:** a measured quick run on the MI355X. The quick figure above is a projection.
 
 ## Reproducibility
 
@@ -258,6 +299,7 @@ don't identify the suite code that produced them.
 | `analysis/axes.py` | Computes TTFT, fluidity, FTGR and startup per cell |
 | `analysis/compare.py` | Intervals and comparison decisions |
 | `collect/capture.py` | Stand-in for the organizer's runner; also generates the reference |
+| `collect/sweep.py` | Measures each cell's capacity on a running server and sets `rate_rps` |
 | `collect/tokenize_events.py` | Independent token counts and times |
 | `collect/corpus.md` | Original passages the prompts are built from |
 | `collect/make_prompts.py` | Generates the seeded prompt sets |
@@ -274,6 +316,9 @@ python -m unittest discover -s tasks/benchmark-design/suite/tests
 python tasks/benchmark-design/suite/tests/sensitivity.py
 python tasks/benchmark-design/suite/evaluate.py --events <dir> \
   --workload tasks/benchmark-design/suite/workload.json --out report.json
+# Rates for new hardware, from suite/, against a running server
+python collect/sweep.py --workload workload.json --base-url http://127.0.0.1:8000 \
+  --out <dir> --write-plan workload.<gpu>.json
 # Real LLMD on a CUDA GPU, from suite/, with requirements.txt installed
 python tests/e2e/e2e_cuda.py --out <dir> --model-dir <Qwen3-0.6B directory>
 ```
@@ -284,10 +329,18 @@ python tests/e2e/e2e_cuda.py --out <dir> --model-dir <Qwen3-0.6B directory>
 | Seed | 20261030 |
 | Debug image | `zmlai/llmd@sha256:752fc2a8a50971a14d2035e653c6c8ddf672d257b3cfed7eb43f216a123bda7c` |
 | Debug model | `Qwen/Qwen3-0.6B`, revision `c1899de289a04d12100db370d81485cdf75e47ca` |
+| MI355X image | `zmlai/llmd@sha256:0a2cd01a2e53c78934a8cfef66f8668da7666be4954a5d18b72df089c54ea34f` |
+| MI355X model | `Qwen/Qwen3.6-27B`, revision `6a9e13bd6fc8f0983b9b99948120bc37f49c13e9` |
 | Prompt tokenizer | `Qwen/Qwen3-8B`, revision `b968826d9c46dd6066d109eabc6255188de91218` |
 
 Raw debug evidence is in `tasks/benchmark-design/artifacts/debug-cuda/` (247 MB). The path is ignored
 by git, so it needs separate delivery. Its reports were re-scored after the last code cut.
+
+MI355X evidence is in `tasks/benchmark-design/artifacts/mi355x-full/` (720 MB, also ignored), with its
+plan, reference, report and the scripts that ran it. The run used `a48ca71` plus the canary change
+from `53cd403`, which was applied before the full capture. The reference's canary entries were then
+regenerated with `regen_canaries.py`, and the anchor entries are as first captured. The capture host
+had no git, so the manifest doesn't record the commit.
 
 **Stand-ins:** the organizer's runner, schemas, fixtures and token adapter don't exist in this draft.
 `collect/capture.py` and `schemas/` are our own, and `evaluate.py` depends only on the event format, so
@@ -305,6 +358,7 @@ enhanced Pi profile wasn't supplied and wasn't used.
 | --- | --- |
 | Allocated GPU-hours | 0 of 12 |
 | Local RTX 3060 | About 1 h of debug runs, not part of the allowance |
+| Own MI355X, Daytona on-demand | 2.23 sandbox-hours for one full run, including setup and the canary fix |
 | Active hours | To be filled in by the candidate |
 | API charges | To be filled in by the candidate |
 
