@@ -1,75 +1,117 @@
-"""Generate the seeded prompt sets, cut to exact token lengths with the pinned tokenizer."""
+"""Generate the seeded prompt sets from collect/corpus.md, cut at sentence breaks to fit token budgets."""
 
 import argparse
 import hashlib
 import json
 import random
+import re
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[4]
-CORPUS = ("README.md", "docs/*.md", "tasks/*/*.md", "agent-harness/*.md", "benchmarks/*.py")
+CORPUS = Path(__file__).with_name("corpus.md")
 COUNTS = {"short": 1000, "long": 200, "long_gen": 200, "prefix": 200, "anchor": 150, "canary": 120}
 PREFIX_QUESTION_TOKENS = 256
 
-QUESTIONS = (
-    "What is the main point of the passage above?",
-    "Which requirement above is the easiest to get wrong, and why?",
-    "Explain the passage above to a new engineer.",
-    "What would you test first, given the passage above?",
-    "List the assumptions the passage above depends on.",
-)
+QUESTIONS = {
+    "email": ("Draft a reply to the email above.",
+              "Summarize what the email above is asking for, and what is still unclear.",
+              "Rewrite the email above to be shorter and more direct."),
+    "story": ("What is this story really about?",
+              "Continue the story above for a few more paragraphs, in the same style.",
+              "Describe the main character of the story above and how they change."),
+    "explainer": ("Explain the passage above to a twelve-year-old.",
+                  "Write three quiz questions, with answers, based on the passage above.",
+                  "What is the most surprising fact in the passage above, and why?"),
+    "code": ("Find the bugs in the code above and explain how to fix them.",
+             "Explain what the code above does, step by step.",
+             "Suggest tests for the code above."),
+    "notes": ("Turn the notes above into a short status update for the wider team.",
+              "List every action item in the notes above, with its owner.",
+              "What risks do the notes above point to?"),
+    "policy": ("Summarize the policy above as a short FAQ.",
+               "Which parts of the policy above are most likely to cause confusion?",
+               "Rewrite the policy above in plain language."),
+    "incident": ("What was the root cause of the incident above, in one paragraph?",
+                 "Which of the follow-up actions above matters most, and why?",
+                 "Write a short message to customers about the incident above."),
+    "docs": ("Using the documentation above, explain how to get started in three steps.",
+             "What questions would a new user still have after reading the documentation above?",
+             "Write a short example that uses what the documentation above describes."),
+    "recipe": ("How could I make the recipe above vegan?",
+               "Turn the recipe above into a shopping list.",
+               "What can go wrong with the recipe above, and how do I avoid it?"),
+    "essay": ("What is the main argument of the essay above, and is it convincing?",
+              "Write a short counter-argument to the essay above.",
+              "Summarize the essay above in three sentences."),
+    "review": ("Is the reviewer above recommending it overall? Explain briefly.",
+               "List the pros and cons from the review above.",
+               "Write a one-paragraph summary of the review above for a busy reader."),
+}
 LONG_TASKS = (
-    "Summarize the text above in five bullet points.",
-    "List every requirement stated in the text above.",
-    "Find the weakest claim in the text above and explain why it is weak.",
-    "Rewrite the key ideas of the text above as a checklist.",
+    "Summarize each of the documents above in two sentences.",
+    "Which of the documents above need action from someone this week? List them with the action.",
+    "Group the documents above by theme and explain each group.",
+    "Write a briefing for a new manager that covers the most important points in the documents above.",
+    "List every number mentioned in the documents above, with what it refers to.",
 )
-TOPICS = (
-    "database indexing", "TCP congestion control", "garbage collection", "compiler register "
-    "allocation", "memory hierarchies", "consensus protocols", "load balancing", "file systems",
-    "virtual memory", "stream processing", "cache coherence", "query planning",
-)
-FORMS = (
-    "Write a detailed technical guide to {topic}. Cover the history, mechanisms, tradeoffs and "
-    "worked examples, and keep going until every part is thorough.",
-    "Write a long tutorial on {topic} for a working engineer, with numbered sections and "
-    "examples in each one.",
-    "Write an in-depth comparison of the main approaches to {topic}, with a section per approach.",
-)
+GUIDE = ("Using the material above as a starting point, write a detailed guide with numbered "
+         "sections and a worked example in each one.")
+TRAINING = ("Write a thorough training document based on the material above, including common "
+            "mistakes and how to avoid them.")
+ARTICLE = "Expand the material above into a long article for a general audience, with headings."
+STORY = "Write a long, detailed story inspired by the material above, with several scenes."
+LONG_FORMS = {
+    "email": (STORY, ARTICLE), "story": (STORY,), "explainer": (ARTICLE, GUIDE),
+    "code": (GUIDE, TRAINING), "notes": (TRAINING, STORY), "policy": (TRAINING, ARTICLE),
+    "incident": (TRAINING, GUIDE), "docs": (GUIDE, TRAINING), "recipe": (GUIDE, ARTICLE),
+    "essay": (ARTICLE, STORY), "review": (ARTICLE, STORY),
+}
+SENTENCE_END = re.compile(r"[.!?]\s|\n")
 
 
-def corpus() -> list[str]:
-    paragraphs = []
-    for pattern in CORPUS:
-        for path in sorted(ROOT.glob(pattern)):
-            paragraphs += [
-                part.strip() for part in path.read_text(encoding="utf-8").split("\n\n")
-                if part.strip()
-            ]
-    return paragraphs
+def corpus() -> list[tuple[str, str, str]]:
+    """(kind, title, text) for every `## kind | title` passage."""
+    passages = []
+    for chunk in CORPUS.read_text(encoding="utf-8").split("\n## ")[1:]:
+        heading, _, text = chunk.partition("\n")
+        kind, _, title = heading.partition(" | ")
+        passages.append((kind.strip(), title.strip(), text.strip()))
+    return passages
 
 
-def body(tokenizer, paragraphs: list[str], rng: random.Random, tokens: int) -> str:
-    """Seeded passage of exactly `tokens` tokens, cut at a token boundary."""
-    if tokens <= 0:
-        return ""
-    picked, count = [], 0
-    while count < tokens:
-        paragraph = rng.choice(paragraphs)
-        picked.append(paragraph)
-        count += len(tokenizer.encode(paragraph, add_special_tokens=False).ids)
-    text = "\n\n".join(picked)
+def size(tokenizer, text: str) -> int:
+    return len(tokenizer.encode(text, add_special_tokens=False).ids)
+
+
+def fit(tokenizer, text: str, tokens: int) -> str:
+    """Longest prefix of at most `tokens` tokens that ends at a sentence or paragraph break."""
     encoding = tokenizer.encode(text, add_special_tokens=False)
-    return text[: encoding.offsets[tokens - 1][1]]
+    if len(encoding.ids) <= tokens:
+        return text
+    cut = text[: encoding.offsets[tokens - 1][1]]
+    ends = [match.end() for match in SENTENCE_END.finditer(cut)]
+    cut = cut[: ends[-1]].rstrip() if ends else cut
+    # Close a code fence the cut left open.
+    return cut + "\n```" if cut.count("```") % 2 else cut
 
 
-def passage_prompt(tokenizer, paragraphs, rng, tokens: int, tail: str) -> str:
-    size = len(tokenizer.encode(tail, add_special_tokens=False).ids) + 2
-    return f"{body(tokenizer, paragraphs, rng, tokens - size)}\n\n{tail}"
+def single(tokenizer, passages, rng: random.Random, tokens: int, tails=QUESTIONS) -> str:
+    kind, _, text = rng.choice(passages)
+    tail = rng.choice(tails[kind])
+    return f"{fit(tokenizer, text, tokens - size(tokenizer, tail) - 4)}\n\n{tail}"
+
+
+def collection(tokenizer, passages, rng: random.Random, tokens: int) -> str:
+    """Documents in a seeded order, the way a retrieval system pastes them into a prompt."""
+    blocks = ["Here are some documents from our shared drive."]
+    for number, (_, title, text) in enumerate(rng.sample(passages, len(passages)), 1):
+        blocks.append(f"### Document {number}: {title}\n\n{text}")
+        if size(tokenizer, "\n\n".join(blocks)) > tokens:
+            break
+    return fit(tokenizer, "\n\n".join(blocks), tokens)
 
 
 def build(tokenizer, seed: int) -> dict[str, list[dict]]:
-    paragraphs = corpus()
+    passages = corpus()
 
     def chat(name: str, index: int, text: str, **extra) -> dict:
         return {"prompt_id": f"{name}-{index:04d}",
@@ -77,36 +119,29 @@ def build(tokenizer, seed: int) -> dict[str, list[dict]]:
 
     sets: dict[str, list[dict]] = {}
     rng = random.Random(f"{seed}/short")
-    sets["short"] = [
-        chat("short", i, passage_prompt(tokenizer, paragraphs, rng, 256, rng.choice(QUESTIONS)))
-        for i in range(COUNTS["short"])
-    ]
+    sets["short"] = [chat("short", i, single(tokenizer, passages, rng, 256))
+                     for i in range(COUNTS["short"])]
     rng = random.Random(f"{seed}/long")
-    sets["long"] = [
-        chat("long", i, passage_prompt(tokenizer, paragraphs, rng, 4096, rng.choice(LONG_TASKS)))
-        for i in range(COUNTS["long"])
-    ]
+    sets["long"] = []
+    for i in range(COUNTS["long"]):
+        task = rng.choice(LONG_TASKS)
+        body = collection(tokenizer, passages, rng, 4096 - size(tokenizer, task) - 4)
+        sets["long"].append(chat("long", i, f"{body}\n\n{task}"))
     rng = random.Random(f"{seed}/long_gen")
     sets["long_gen"] = [
-        chat("long_gen", i, passage_prompt(
-            tokenizer, paragraphs, rng, 128,
-            rng.choice(FORMS).format(topic=rng.choice(TOPICS)),
-        ))
+        chat("long_gen", i, single(tokenizer, passages, rng, 128, LONG_FORMS))
         for i in range(COUNTS["long_gen"])
     ]
     rng = random.Random(f"{seed}/prefix")
-    shared = body(tokenizer, paragraphs, rng, 4096 - PREFIX_QUESTION_TOKENS)
+    shared = collection(tokenizer, passages, rng, 4096 - PREFIX_QUESTION_TOKENS)
     sets["prefix"] = [
-        chat("prefix", i, f"{shared}\n\n" + passage_prompt(
-            tokenizer, paragraphs, rng, PREFIX_QUESTION_TOKENS, rng.choice(QUESTIONS)
-        ))
+        chat("prefix", i, f"{shared}\n\nA colleague has also sent this:\n\n"
+             + single(tokenizer, passages, rng, PREFIX_QUESTION_TOKENS - 12))
         for i in range(COUNTS["prefix"])
     ]
     rng = random.Random(f"{seed}/anchor")
-    sets["anchor"] = [
-        chat("anchor", i, passage_prompt(tokenizer, paragraphs, rng, 256, rng.choice(QUESTIONS)))
-        for i in range(COUNTS["anchor"])
-    ]
+    sets["anchor"] = [chat("anchor", i, single(tokenizer, passages, rng, 256))
+                      for i in range(COUNTS["anchor"])]
     rng = random.Random(f"{seed}/canary")
     sets["canary"] = []
     for i in range(COUNTS["canary"]):

@@ -37,12 +37,18 @@ anchors and startup probes keep natural stopping, because their answers are read
 Prompts are real text, not random token IDs, because speculative decoding's acceptance rate depends
 on content, and random input would understate a server that drafts. ShareGPT was considered and
 rejected: it can't fill 4096-token prompts, its licence is unclear, and it would add a large download
-to reproduction. The repository's text leans toward code and documentation, which drafts predict well,
-so if the engine speculates, these prompts may flatter it.
+to reproduction. Instead, `collect/corpus.md` holds 36 original passages written for this suite, of
+eleven kinds: emails, stories, explainers, code, meeting notes, policies, incident reports, product
+docs, recipes, essays and reviews. A short prompt is one passage followed by a question that fits its
+kind ("Draft a reply to the email above."). A long prompt is a set of passages pasted in as documents,
+the way a retrieval system builds one, followed by a task over all of them. Passages are cut at the
+last sentence or line break inside the token budget, so prompts read naturally and are slightly
+shorter than nominal: 200–254 tokens for short, 4027–4094 for long. With only 36 passages, short
+prompts repeat content under different questions; the unique session line still makes every request
+a cache miss. The corpus is small and written in one voice, so drafts may predict it better than
+real traffic, and a speculating engine may look somewhat better than it would in production.
 
-Omitted: multi-turn conversations, tool calls, multi-GPU serving, and prompts over 4096 tokens. Prompts
-are built from this repository's documents and code, so they're less realistic than real chat
-traffic. `cold_fs` needs host rights to drop the page cache, so results report `warm_fs` only.
+Omitted: multi-turn conversations, tool calls, multi-GPU serving, and prompts over 4096 tokens. `cold_fs` needs host rights to drop the page cache, so results report `warm_fs` only.
 
 **Pending:** capacity on the MI355X, which sets every `rate_rps`.
 
@@ -252,6 +258,7 @@ don't identify the suite code that produced them.
 | `analysis/compare.py` | Intervals and comparison decisions |
 | `collect/capture.py` | Stand-in for the organizer's runner; also generates the reference |
 | `collect/tokenize_events.py` | Independent token counts and times |
+| `collect/corpus.md` | Original passages the prompts are built from |
 | `collect/make_prompts.py` | Generates the seeded prompt sets |
 | `prompts/` | Generated prompts |
 | `schemas/` | Plan and event formats |
@@ -272,7 +279,7 @@ python tests/e2e/e2e_cuda.py --out <dir> --model-dir <Qwen3-0.6B directory>
 
 | Identity | Value |
 | --- | --- |
-| `workload.json` SHA-256 | `75316b9e5aa901fd7e8bdd11882865cb6aab642d774376f8d2d3df1544ea2196` |
+| `workload.json` SHA-256 | `57610a7836543ac39c6cd9ce4907a5c5a7d93f6546f2421f3a6de78c952d79a2` |
 | Seed | 20261030 |
 | Debug image | `zmlai/llmd@sha256:752fc2a8a50971a14d2035e653c6c8ddf672d257b3cfed7eb43f216a123bda7c` |
 | Debug model | `Qwen/Qwen3-0.6B`, revision `c1899de289a04d12100db370d81485cdf75e47ca` |
