@@ -262,10 +262,17 @@
           "additionalProperties": false,
           "required": ["process", "load_fraction", "rate_rps"],
           "properties": {
-            "process": { "const": "poisson" },
+            "process": { "enum": ["poisson", "gamma"] },
+            "burstiness": {
+              "description": "Gamma shape. Below 1 clumps arrivals; 1 equals Poisson.",
+              "$ref": "#/$defs/positive"
+            },
             "load_fraction": { "$ref": "#/$defs/fraction" },
             "rate_rps": { "type": ["number", "null"], "exclusiveMinimum": 0 }
-          }
+          },
+          "if": { "properties": { "process": { "const": "gamma" } } },
+          "then": { "required": ["burstiness"] },
+          "else": { "not": { "required": ["burstiness"] } }
         },
         "prefix_cache": { "enum": ["miss", "hit"] },
         "canary_fraction": { "$ref": "#/$defs/fraction" },

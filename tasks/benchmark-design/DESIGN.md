@@ -15,13 +15,19 @@ score, because a fast server with stalls and a slow server with smooth output ar
 | Cell | Prompts | Output | Load | What it exposes |
 | --- | --- | --- | --- | --- |
 | `chat_light` | 256 tokens | Exactly 256 | 25% of capacity | Baseline TTFT and smoothness with no queueing |
+| `bursty` | 256 tokens | Exactly 256 | 25% of capacity, clumped | Short peaks the average rate hides: admission, batching, prefill contention |
 | `long_prompt` | 4096 tokens | Exactly 256 | 25% of capacity | Delayed prefill, which fast decode averages would hide |
 | `long_output` | 128 tokens | Exactly 1024, `ignore_eos` | 25% of capacity | Decode stalls and use of slack |
 | `near_capacity` | 80% short, 20% long | Exactly 256 | 75% of capacity | Queueing, drops and unfair scheduling |
 | `prefix_hit` | 4096 tokens, shared prefix | Exactly 256 | 25% of capacity | Prefix-cache behavior |
 
 Arrivals are seeded Poisson, because bursts are what real clients send, and a closed loop would hide
-queueing by slowing down with the server. Rates are set as a share of measured capacity, so they
+queueing by slowing down with the server. `bursty` is `chat_light` with gamma gaps of shape 0.25
+(vLLM's `--burstiness`): the same average rate, but the gaps' coefficient of variation is 2 instead of
+1, so requests arrive in clumps with long quiet spells between. Only the arrival shape differs from
+`chat_light`, so a gap between the two cells is the cost of bursts alone. A Gaussian would be the
+wrong shape here: gaps can't be negative, and real traffic has a long tail of quiet spells. It is in
+full mode only, to keep quick mode's cost unchanged. Rates are set as a share of measured capacity, so they
 remain meaningful on any hardware. Every cell uses `ignore_eos`, so output length is set by the plan,
 not by when the model chooses to stop. Without it, a model or engine change that writes shorter
 answers would look like a speedup, and two runs wouldn't do the same work. A request that stops before
@@ -110,10 +116,10 @@ on one cell.
 
 | | Quick | Full |
 | --- | --- | --- |
-| Cells | 2 | 5 |
+| Cells | 2 | 6 |
 | Repetitions per cell | 5 | 8 |
-| Window | 120 s | 180 s |
-| Launches | 3 | 5 |
+| Window | 120 s | 120 s |
+| Launches | 3 | 4 |
 | Quantiles | p50, p90 | p50, p90, p99 |
 
 **Quantiles** are reported only when `n(1-q) >= 5`, so p99 needs 500 requests. Below that, it's close
@@ -217,7 +223,13 @@ Planned request time, excluding every other phase:
 | Mode | Request time | Wall limit in plan |
 | --- | --- | --- |
 | Quick | 2 × 5 × 120 s = 20 min | 40 min |
-| Full | 5 × 8 × 180 s = 2 h | 2.5 h, inside the 3 h ceiling |
+| Full | 6 × 8 × 120 s = 96 min | 2.5 h, inside the 3 h ceiling |
+
+Full mode leaves about an hour of the 3 h ceiling for what hasn't been measured on the target:
+four launches of a 27B model, which may each take minutes, and drains, which a slowed server can
+stretch from seconds to minutes. Repetitions were kept at 8 because they set the interval width;
+the shorter window costs requests per repetition, so p99 is more often underpowered and is
+reported as such.
 
 **Pending:** measured quick and full cost on the MI355X. That the full plan fits is a calculation
 until then, not a result. No GPU-hours have been used against the 12-hour allowance.
@@ -260,7 +272,7 @@ python tests/e2e/e2e_cuda.py --out <dir> --model-dir <Qwen3-0.6B directory>
 
 | Identity | Value |
 | --- | --- |
-| `workload.json` SHA-256 | `6f11ec437be7488d158175f89538c0b92c5bad20d53fb16302a03f07ef918534` |
+| `workload.json` SHA-256 | `75316b9e5aa901fd7e8bdd11882865cb6aab642d774376f8d2d3df1544ea2196` |
 | Seed | 20261030 |
 | Debug image | `zmlai/llmd@sha256:752fc2a8a50971a14d2035e653c6c8ddf672d257b3cfed7eb43f216a123bda7c` |
 | Debug model | `Qwen/Qwen3-0.6B`, revision `c1899de289a04d12100db370d81485cdf75e47ca` |

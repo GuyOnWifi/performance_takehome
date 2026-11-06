@@ -76,6 +76,19 @@ def _unique(messages: list[dict[str, str]], key: str) -> list[dict[str, str]]:
     return [{**head, "content": f"Session {tag}.\n{head['content']}"}, *rest]
 
 
+def _gap(rng: random.Random, arrival: dict[str, Any]) -> float:
+    """One seeded inter-arrival gap with mean 1/rate_rps.
+
+    Poisson gaps are exponential. Gamma gaps take vLLM's burstiness as the shape: below 1 requests
+    clump into bursts separated by long quiet spells, at the same average rate.
+    """
+    rate = arrival["rate_rps"]
+    if arrival["process"] == "gamma":
+        shape = arrival["burstiness"]
+        return rng.gammavariate(shape, 1 / (shape * rate))
+    return rng.expovariate(rate)
+
+
 def build_window(
     plan: dict[str, Any], prompts: Prompts, cell: str, repetition: int, duration_s: float
 ) -> list[Spec]:
@@ -83,11 +96,10 @@ def build_window(
     config = plan["cells"][cell]
     key = f"{plan['seed']}/{cell}/{repetition}"
     rng = random.Random(key)
-    rate = config["arrival"]["rate_rps"]
-    if rate is None:
+    if config["arrival"]["rate_rps"] is None:
         raise ValueError(f"{cell} has no rate_rps; set it before capture")
     names, weights = zip(*config["prompt_mix"].items(), strict=True)
-    specs, clock = [], rng.expovariate(rate)
+    specs, clock = [], _gap(rng, config["arrival"])
     while clock < duration_s:
         index = len(specs)
         rid = f"r-{cell}-{repetition}-{index}"
@@ -118,7 +130,7 @@ def build_window(
                         min_output_tokens=config["output"]["min_output_tokens"],
                         ignore_eos=config["output"]["ignore_eos"], **common)
         specs.append(spec)
-        clock += rng.expovariate(rate)
+        clock += _gap(rng, config["arrival"])
     return specs
 
 

@@ -18,7 +18,7 @@ def plan_data():
     message = [{"role": "user", "content": "text"}]
     prompt = {"prompt_id": "x", "messages": message, "expected": "1"}
     cell = {"prompt_mix": {"short": 1.0}, "prefix_cache": "miss", "canary_fraction": 0.05,
-            "anchor_fraction": 0.05, "arrival": {"rate_rps": 5.0},
+            "anchor_fraction": 0.05, "arrival": {"process": "poisson", "rate_rps": 5.0},
             "output": {"max_tokens": 8, "min_output_tokens": 1, "ignore_eos": False}}
     data = {"seed": 7, "cells": {"a": cell, "b": cell},
             "canary": {"prompt_set": "canary", "max_tokens": 4, "min_output_tokens": 1},
@@ -64,6 +64,26 @@ class ScheduleTests(unittest.TestCase):
         for spec in specs:
             changed = spec.messages[0]["content"] != "text"
             self.assertEqual(changed, not (spec.is_canary or spec.is_anchor))
+
+    def test_gamma_arrivals_keep_the_rate_but_clump(self):
+        from collect.capture import build_window
+
+        def gaps(arrival):
+            data, prompts = plan_data()
+            data["cells"]["a"]["arrival"] = {**arrival, "rate_rps": 5.0}
+            offsets = [s.offset_s for s in build_window(data, prompts, "a", 0, 2000)]
+            return [b - a for a, b in zip(offsets, offsets[1:])]
+
+        def spread(values):
+            mean = sum(values) / len(values)
+            return (sum((v - mean) ** 2 for v in values) / len(values)) ** 0.5 / mean
+
+        poisson = gaps({"process": "poisson"})
+        bursty = gaps({"process": "gamma", "burstiness": 0.25})
+        self.assertAlmostEqual(len(bursty) / 2000, 5.0, delta=0.5)
+        # The gaps' coefficient of variation is 1/sqrt(shape): 1 for Poisson, 2 at shape 0.25.
+        self.assertAlmostEqual(spread(poisson), 1.0, delta=0.1)
+        self.assertAlmostEqual(spread(bursty), 2.0, delta=0.3)
 
     def test_missing_rate_refuses_to_guess(self):
         from collect.capture import build_window
