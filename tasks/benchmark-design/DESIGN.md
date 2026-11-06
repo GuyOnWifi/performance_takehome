@@ -125,13 +125,23 @@ on one cell.
 | --- | --- | --- |
 | Cells | 2 | 6 |
 | Repetitions per cell | 5 | 8 |
-| Window | 120 s | 120 s |
+| Window | 120 s, or until 53 counted requests | 120 s, or until 53 counted requests |
 | Launches | 3 | 4 |
 | Quantiles | p50, p90 | p50, p90, p99 |
 
-**Quantiles** are reported only when `n(1-q) >= 5`, so p99 needs 500 requests. Below that, it's close
-to the maximum, and the result is `quantile_underpowered`. On the MI355X this left three of the six
-full-mode cells underpowered (see the validation matrix).
+**Quantiles** are reported only when `n(1-q) >= 5`; below that a quantile is close to the maximum.
+Only the per-repetition p90 gates a cell, because it's what comparisons use. Each repetition needs 50
+counted requests, and a cell with fewer is `quantile_underpowered`. p99 needs 500 requests per cell. It
+is reported when it has them and left empty otherwise, without changing the cell's state.
+
+**Windows** run for 120 s, and keep going past that until they hold 53 counted requests: the 50 that
+p90 needs, plus 5% spare. Canaries and anchors don't count. The schedule is the same seeded sequence,
+so a longer window only extends it. This rule came from the MI355X full run. Rates follow measured
+capacity, so a slow cell on slow hardware gets few requests in a fixed window, and three of the six
+cells there had 22 to 51 per repetition.
+
+A plan can also name extra modes with the same fields. The targeted MI355X re-run used one, `fill`,
+covering only the cells that needed it.
 
 **Comparison** uses log p90 per repetition, mean fluidity per repetition and log startup per launch.
 Each gets a Welch t-interval with a Bonferroni adjustment across the mode's primary comparisons. A
@@ -147,6 +157,33 @@ least 3 repetitions.
 
 Margins are provisional: 0.1 log for TTFT and startup, and 0.02 for fluidity.
 
+An `inconclusive` run makes every decision against it `inconclusive` (`run_inconclusive`), so one
+underpowered cell blocks the whole comparison. That's why the window rule above matters.
+
+**What the margins can resolve on the MI355X.** The full run's spread between repetitions sets how wide
+an interval two runs of that spread would get, using the suite's own interval code. The rows below give
+the smallest TTFT or startup slowdown that could be called a `regression`, which is the margin plus
+that half-width. They also say whether `equivalent` is reachable at all: it needs a half-width under the
+margin. Quick mode uses 5 repetitions per side and full mode 8; startup uses 3 and 4 launches.
+
+| Cell / axis | SD per repetition (log) | Smallest regression, quick / full | `equivalent` reachable |
+| --- | --- | --- | --- |
+| `chat_light` TTFT | 0.039 | 20% / 18% | Yes |
+| `long_output` TTFT | 0.045 | 22% / 19% | Yes |
+| `prefix_hit` TTFT | 0.043 | 21% / 19% | Yes |
+| `bursty` TTFT | 0.095 | 35% / 30% | No |
+| `long_prompt` TTFT | 0.114 | 41% / 35% | No |
+| `near_capacity` TTFT | 0.422 | 171% / 129% | No |
+| `near_capacity` fluidity | 0.019 | +0.060 / +0.053 | No |
+| Startup | 0.040 | 28% / 26% | No |
+
+Fluidity on the other cells is close to 1.000 in every repetition, so its 0.02 margin is what decides.
+Log TTFT residuals by launch averaged between −0.04 and +0.03, within their standard errors, so launches
+add no visible effect. `near_capacity` is the outlier: at 75% of capacity, queueing makes its p90 vary
+by about 50% between repetitions, so it can only flag large changes. Startup is dominated by a ~28 s
+compile, so its spread is small, but 3 or 4 launches give a wide interval. The spreads for
+`long_prompt`, `long_output` and `prefix_hit` come from underpowered repetitions, so they are rough.
+
 Identical runs show that the unpaired interval is too wide. Two A/A runs differed by only 0.002 and
 0.003 log on TTFT, yet both came back `inconclusive`, because the interval reflects different schedules
 across repetitions, not disagreement between runs. Comparing matching repetitions as pairs should
@@ -156,7 +193,7 @@ tighten this, but it needs real A/A data before being adopted.
 
 ## Validation matrix
 
-Everything below is synthetic or debug evidence, except the single MI355X run at the end.
+Everything below is synthetic or debug evidence, except the two MI355X runs at the end.
 
 **Synthetic faults:** 47 families land in their expected state with 0 mismatches
 (`suite/tests/matrix.py`). They cover bursts, stalls, late first tokens, reasoning channels, Unicode
@@ -227,18 +264,42 @@ What the cells showed:
 - At the same mean rate as `chat_light`, bursts raised TTFT p90 by 56% and left fluidity unchanged.
 - At 75% of capacity, queueing pushed TTFT p90 past 2 s, with a wide interval.
 - `prefix_hit` and `long_prompt` send prompts of the same length. Their TTFT and capacity matched, so
-  the shared prefix gave no measurable gain with LLMD's defaults. Whether the default build caches
-  prefixes at all wasn't checked.
+  the shared prefix gave no measurable gain with LLMD's defaults. The image's `llmd --help` has no
+  prefix-cache option, so the default is the only behaviour to measure.
 
-**The underpowered cells are a design gap.** The power rule needs 50 counted requests per repetition
-for the per-repetition p90, and 500 per cell for p99. At 25% of capacity in 120 s windows,
-`long_output` got 22–33 per repetition, `long_prompt` 28–43 and `prefix_hit` 30–51. Setting rates from
-capacity keeps load comparable across hardware, but the sample count then falls with capacity, and
-the fixed window doesn't make up for it. Quick mode's two cells had at least 75 and 159 per repetition
-here, so they are powered.
+**The underpowered cells were a design gap, now closed.** At 25% of capacity in 120 s windows,
+`long_output` got 22–33 counted requests per repetition, `long_prompt` 28–43 and `prefix_hit` 30–51,
+short of the 50 that p90 needs. Setting rates from capacity keeps load comparable across hardware, but
+the sample count then falls with capacity, and a fixed window doesn't make up for it. The window rule
+in the statistical policy fixes this. Quick mode's two cells had at least 75 and 159 per repetition
+here, so they were powered either way.
+
+**MI355X, targeted re-run:** the same three cells under the window rule, later the same day in a new
+sandbox. It used the full run's plan, rates and reference, plus a `fill` mode: 2 repetitions per cell,
+3 launches, p50 and p90. The offline schedule predicted 53 counted requests in every window and 1340 s
+of requests, and the run matched both. All 354 requests completed and none failed, none of 20 anchor
+checks diverged, and the run is `valid`.
+
+| Cell | Window | TTFT p90 per repetition | Full run, 8 repetitions | Fluidity per repetition | State |
+| --- | --- | --- | --- | --- | --- |
+| `long_prompt` | 202–221 s | 1399, 1356 ms | 1360–1833 ms | 0.970, 0.976 | `valid` |
+| `long_output` | 257–262 s | 62, 63 ms | 57–65 ms | 1.000, 1.000 | `valid` |
+| `prefix_hit` | 181–217 s | 1468, 1582 ms | 1448–1673 ms | 0.978, 0.975 | `valid` |
+
+Startup was 36.8, 36.5 and 36.5 s, inside the full run's 35.3–38.6 s.
+
+What it does and doesn't show:
+
+- Every repetition lands inside the full run's range, fluidity included, on a different sandbox. That
+  is a consistency check, not an A/A. The plans differ, so the suite rejects the pair as
+  `identity_mismatch`, and 2 repetitions are below the 3 a comparison needs.
+- With 2 repetitions the t-interval has one degree of freedom, so the report's intervals are too wide
+  to use, for example 334–5676 ms on `long_prompt`. The run was sized to show the cells can be
+  powered within the remaining budget, not to narrow their intervals.
+- `prefix_hit` was no faster than `long_prompt` here either, with pooled p50s of 1161 and 1173 ms.
 
 There's no MI355X A/A yet, so `max_anchor_divergence` stays at the provisional 0.1 from the 3060. The
-observed divergence was 0.5%.
+observed divergence was 0.5% in the full run and 0 of 20 in the re-run.
 
 **Limitations:** only one real degradation has been tested. Real faults on the MI355X will be limited
 to what can be produced without changing the engine, so most fault coverage stays synthetic. The real
@@ -257,11 +318,12 @@ The debug plan on the 3060, and one full run on the MI355X:
 | `clean_b` | 403 s | 18 s | 18 s | 357 s | 8 s | 2 s |
 | `--batch-size=1` | 759 s | 17 s | 17 s | 357 s | 366 s | 2 s |
 | MI355X full | 6265 s | 149 s | 98 s | 5675 s | 338 s | 3 s |
+| MI355X targeted re-run | 1585 s | 110 s | 73 s | 1340 s | 60 s | 3 s |
 
 The degraded run shows why drain is measured: overload doubled the run's cost, all of it after the
 request windows ended.
 
-The MI355X full run took 1.74 GPU-hours, inside the plan's 2.5 h limit. Each launch took about 37 s,
+The MI355X full run took 1.74 GPU-hours, inside the plan's 2.5 h limit, and the re-run 0.44. Each launch took about 37 s,
 with the model in a warm page cache. New hardware also needs a one-off setup before its first run:
 19 s to download the model, 844 s for the reference and 476 s for the capacity sweep. The reference
 ran its canaries one at a time; they now run 16 at once. Using the same launch, warmup and drain
@@ -269,18 +331,21 @@ times, quick mode would take about 25 minutes, or 0.4 GPU-hours.
 
 Planned request time, excluding every other phase:
 
-| Mode | Request time | Wall limit in plan |
-| --- | --- | --- |
-| Quick | 2 × 5 × 120 s = 20 min | 40 min |
-| Full | 6 × 8 × 120 s = 96 min | 2.5 h, inside the 3 h ceiling |
+| Mode | At 120 s windows | MI355X rates, with the window rule | Wall limit in plan |
+| --- | --- | --- | --- |
+| Quick | 2 × 5 × 120 s = 20 min | 20 min | 40 min |
+| Full | 6 × 8 × 120 s = 96 min | 130 min | 2.5 h, inside the 3 h ceiling |
 
-Full mode leaves about an hour of the 3 h ceiling for what hasn't been measured on the target: four
-launches of a 27B model, which may each take minutes, and drains, which a slowed server can stretch
-from seconds to minutes. On the MI355X, launches, warmup and drain came to 10 minutes. Repetitions
-were kept at 8 because they set the interval width; the shorter window costs requests per repetition.
-On the MI355X that left three full-mode cells `inconclusive`, as described in the validation matrix.
+The MI355X column comes from the seeded schedule with the rates `collect/sweep.py` measured there. The
+fast cells still fill 120 s windows. `long_prompt`, `long_output` and `prefix_hit` stretch to 143–287 s.
+On the MI355X, launches, warmup and drain came to 10 minutes, so a full run there would take about 140
+minutes, 10 minutes inside the plan's limit. Gating on p99 as well would have needed 150 minutes of
+requests alone. Slower hardware stretches windows further, so the limit is what bounds a run;
+`evaluate.py` flags a run that overruns it as `over_budget`. Repetitions were kept at 8 because they
+set the interval width.
 
-**Pending:** a measured quick run on the MI355X. The quick figure above is a projection.
+**Pending:** a measured quick run on the MI355X. One was started and stopped after 10 minutes, to put
+the remaining budget into the targeted re-run. The quick figure above is a projection.
 
 ## Reproducibility
 
@@ -340,7 +405,13 @@ MI355X evidence is in `tasks/benchmark-design/artifacts/mi355x-full/` (720 MB, a
 plan, reference, report and the scripts that ran it. The run used `a48ca71` plus the canary change
 from `53cd403`, which was applied before the full capture. The reference's canary entries were then
 regenerated with `regen_canaries.py`, and the anchor entries are as first captured. The capture host
-had no git, so the manifest doesn't record the commit.
+had no git, so the manifest doesn't record the commit. Its report was re-scored after the p90 gate
+change, with the same states and values.
+
+The targeted re-run is in `tasks/benchmark-design/artifacts/mi355x-fill/` (106 MB). It holds the plan,
+the full run's reference, `llmd --help` from the image, and the scripts that planned it
+(`plan_fill.py`), rehearsed it against the fake server (`rehearse_fill.py`) and ran it. It used
+`ab4ab8f`. The p90 gate change after it doesn't alter its scoring, because `fill` has no p99.
 
 **Stand-ins:** the organizer's runner, schemas, fixtures and token adapter don't exist in this draft.
 `collect/capture.py` and `schemas/` are our own, and `evaluate.py` depends only on the event format, so
@@ -358,7 +429,7 @@ enhanced Pi profile wasn't supplied and wasn't used.
 | --- | --- |
 | Allocated GPU-hours | 0 of 12 |
 | Local RTX 3060 | About 1 h of debug runs, not part of the allowance |
-| Own MI355X, Daytona on-demand | 2.23 sandbox-hours for one full run, including setup and the canary fix |
+| Own MI355X, Daytona on-demand | 2.86 sandbox-hours: the full run with setup and the canary fix (2.23 h), a quick run stopped after 10 minutes, and the targeted re-run (0.46 h) |
 | Active hours | To be filled in by the candidate |
 | API charges | To be filled in by the candidate |
 
