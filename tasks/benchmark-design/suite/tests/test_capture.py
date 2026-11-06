@@ -103,6 +103,16 @@ class ScheduleTests(unittest.TestCase):
         self.assertEqual(len(flat), 16)
         self.assertLessEqual(max(map(len, dealt)) - min(map(len, dealt)), 1)
 
+    def test_sweep_capacity_ignores_batch_waves(self):
+        from collect.sweep import capacity
+
+        # 16 fixed-length requests finish together every 10 s: the true rate is 1.6 rps.
+        waves = [(t, t + 10.0, True) for t in (0.0, 10.0, 20.0) for _ in range(16)]
+        # This window sees only one wave finish, so counting completions would say 16/14.
+        self.assertAlmostEqual(capacity(waves, (5.0, 19.0))["capacity_rps"], 1.6)
+        failed = [(0.0, 10.0, False)] * 16
+        self.assertEqual(capacity(failed, (0.0, 10.0)), {"failed_share": 16.0, "capacity_rps": 0.0})
+
     def test_early_stop_triggers_only_on_decided_failures(self):
         from collect.capture import EarlyStop
 

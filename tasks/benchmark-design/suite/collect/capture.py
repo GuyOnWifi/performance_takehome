@@ -431,8 +431,11 @@ class Server:
 
 
 def _git_commit() -> str | None:
-    done = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
-                          check=False, cwd=Path(__file__).resolve().parent)
+    try:
+        done = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
+                              check=False, cwd=Path(__file__).resolve().parent)
+    except OSError:  # no git on the capture host
+        return None
     return done.stdout.strip() or None
 
 
