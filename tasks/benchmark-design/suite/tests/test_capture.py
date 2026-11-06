@@ -61,9 +61,8 @@ class ScheduleTests(unittest.TestCase):
 
         data, prompts = plan_data()
         data["gates"] = {"min_valid_per_quantile": 5}
-        # The per-repetition p90 needs 50; a pooled p99 over 8 repetitions needs 500/8 each.
-        self.assertEqual(window_minimum(data, {"quantiles": [0.5, 0.9], "repetitions": 2}), 53)
-        self.assertEqual(window_minimum(data, {"quantiles": [0.5, 0.9, 0.99], "repetitions": 8}), 66)
+        # The per-repetition p90 needs 50 counted requests, plus 5% spare.
+        self.assertEqual(window_minimum(data), 53)
         short = build_window(data, prompts, "a", 0, 2)
         long = build_window(data, prompts, "a", 0, 2, 53)
         self.assertEqual(long[:len(short)], short)

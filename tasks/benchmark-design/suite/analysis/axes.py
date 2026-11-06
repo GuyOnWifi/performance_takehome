@@ -96,15 +96,14 @@ def _groups(results: list[RequestResult]) -> dict[str, list[RequestResult]]:
     return dict(grouped)
 
 
-def _power_reasons(
-    groups: dict[str, list[RequestResult]], plan: Plan, mode: dict[str, Any]
-) -> tuple[str, ...]:
+def _power_reasons(groups: dict[str, list[RequestResult]], plan: Plan) -> tuple[str, ...]:
+    """Only the per-repetition p90 that comparisons use gates a cell.
+
+    Other quantiles, such as p99, are reported when powered and left empty otherwise.
+    """
     minimum = plan.data["gates"]["min_valid_per_quantile"]
-    total = sum(len(group) for group in groups.values())
-    enough = (
-        len(groups) >= 2
-        and all(powered(total, q, minimum) for q in mode["quantiles"])
-        and all(powered(len(group), PRIMARY_QUANTILE, minimum) for group in groups.values())
+    enough = len(groups) >= 2 and all(
+        powered(len(group), PRIMARY_QUANTILE, minimum) for group in groups.values()
     )
     return () if enough else ("quantile_underpowered",)
 
@@ -195,7 +194,7 @@ def cell_axes(
     groups = _groups(results)
     limit = plan.data["gates"]["max_failed_fraction"]
     invalid = assessment.failure_fractions.get(cell, 0.0) > limit
-    reasons = _power_reasons(groups, plan, mode)
+    reasons = _power_reasons(groups, plan)
     state = INVALID if invalid else INCONCLUSIVE if reasons else VALID
     final = ("failure_rate",) if invalid else reasons
     if not groups:

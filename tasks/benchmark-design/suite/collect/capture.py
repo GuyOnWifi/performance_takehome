@@ -91,18 +91,15 @@ def _gap(rng: random.Random, arrival: dict[str, Any]) -> float:
     return rng.expovariate(rate)
 
 
-def window_minimum(plan: dict[str, Any], mode: dict[str, Any]) -> int:
-    """Counted requests each window needs for its quantiles to be powered.
+def window_minimum(plan: dict[str, Any]) -> int:
+    """Counted requests each window needs for its p90 to be powered.
 
     Rates follow capacity, so a slow cell on slow hardware fills a fixed window with too few
-    requests. The headline p90 is taken per repetition, so each window needs min_valid/(1-0.9) of
-    its own, and pooled quantiles need min_valid/(1-q) spread over the repetitions. The 5% spare
-    covers a failed or excluded request.
+    requests. Comparisons take p90 per repetition, so each window needs min_valid/(1-0.9) of its
+    own. The 5% spare covers a failed or excluded request.
     """
     minimum = plan["gates"]["min_valid_per_quantile"]
-    per_window = minimum / (1 - PRIMARY_QUANTILE)
-    pooled = max(minimum / (1 - q) for q in mode["quantiles"]) / mode["repetitions"]
-    return math.ceil(round(max(per_window, pooled) * 1.05, 9))
+    return math.ceil(round(minimum / (1 - PRIMARY_QUANTILE) * 1.05, 9))
 
 
 def build_window(
@@ -484,7 +481,7 @@ async def run_capture(args) -> int:
     windows = layout(plan.data, mode)
     specs = {
         (cell, rep): build_window(plan.data, prompts, cell, rep, mode["duration_s"],
-                                  window_minimum(plan.data, mode))
+                                  window_minimum(plan.data))
         for dealt in windows for cell, rep in dealt
     }
     planned: dict[str, dict[str, int]] = defaultdict(dict)
