@@ -7,6 +7,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import math
 import random
 import shlex
 import subprocess
@@ -20,6 +21,7 @@ from typing import Any, TextIO
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import httpx  # noqa: E402
+from analysis.axes import PRIMARY_QUANTILE  # noqa: E402
 from analysis.events import Plan, load_plan  # noqa: E402
 from analysis.gates import (  # noqa: E402
     INVALID,
@@ -89,18 +91,36 @@ def _gap(rng: random.Random, arrival: dict[str, Any]) -> float:
     return rng.expovariate(rate)
 
 
+def window_minimum(plan: dict[str, Any], mode: dict[str, Any]) -> int:
+    """Counted requests each window needs for its quantiles to be powered.
+
+    Rates follow capacity, so a slow cell on slow hardware fills a fixed window with too few
+    requests. The headline p90 is taken per repetition, so each window needs min_valid/(1-0.9) of
+    its own, and pooled quantiles need min_valid/(1-q) spread over the repetitions. The 5% spare
+    covers a failed or excluded request.
+    """
+    minimum = plan["gates"]["min_valid_per_quantile"]
+    per_window = minimum / (1 - PRIMARY_QUANTILE)
+    pooled = max(minimum / (1 - q) for q in mode["quantiles"]) / mode["repetitions"]
+    return math.ceil(round(max(per_window, pooled) * 1.05, 9))
+
+
 def build_window(
-    plan: dict[str, Any], prompts: Prompts, cell: str, repetition: int, duration_s: float
+    plan: dict[str, Any], prompts: Prompts, cell: str, repetition: int, duration_s: float,
+    min_counted: int = 0,
 ) -> list[Spec]:
-    """One seeded window. Two runs of one plan produce identical requests."""
+    """One seeded window, lengthened past duration_s until it holds min_counted plain requests.
+
+    Two runs of one plan produce identical requests.
+    """
     config = plan["cells"][cell]
     key = f"{plan['seed']}/{cell}/{repetition}"
     rng = random.Random(key)
     if config["arrival"]["rate_rps"] is None:
         raise ValueError(f"{cell} has no rate_rps; set it before capture")
     names, weights = zip(*config["prompt_mix"].items(), strict=True)
-    specs, clock = [], _gap(rng, config["arrival"])
-    while clock < duration_s:
+    specs, clock, counted = [], _gap(rng, config["arrival"]), 0
+    while clock < duration_s or counted < min_counted:
         index = len(specs)
         rid = f"r-{cell}-{repetition}-{index}"
         draw = rng.random()
@@ -129,6 +149,7 @@ def build_window(
                         max_tokens=config["output"]["max_tokens"],
                         min_output_tokens=config["output"]["min_output_tokens"],
                         ignore_eos=config["output"]["ignore_eos"], **common)
+            counted += 1
         specs.append(spec)
         clock += _gap(rng, config["arrival"])
     return specs
@@ -460,7 +481,8 @@ async def run_capture(args) -> int:
     prompts = Prompts(plan.data, args.workload.parent, plan.reference)
     windows = layout(plan.data, mode)
     specs = {
-        (cell, rep): build_window(plan.data, prompts, cell, rep, mode["duration_s"])
+        (cell, rep): build_window(plan.data, prompts, cell, rep, mode["duration_s"],
+                                  window_minimum(plan.data, mode))
         for dealt in windows for cell, rep in dealt
     }
     planned: dict[str, dict[str, int]] = defaultdict(dict)
