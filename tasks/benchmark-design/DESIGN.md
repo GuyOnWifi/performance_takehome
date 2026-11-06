@@ -85,7 +85,7 @@ are trusted as the measurement. Everything the server claims is checked independ
 **Correctness uses two checks.** Canaries are seeded arithmetic prompts, passing when the last number
 is the answer. Anchors are fixed prompts compared with a reference generated per model revision.
 
-Real LLMD changed four rules that the fake server had let pass:
+Real LLMD changed five rules that the fake server had let pass:
 
 | Original rule | What real LLMD did | Rule now |
 | --- | --- | --- |
@@ -93,6 +93,7 @@ Real LLMD changed four rules that the fake server had let pass:
 | Usage equals the streamed token count | `usage` includes `<think>` tags that are never streamed | Hidden tags are added to the count |
 | Usage within 1 token | Retokenizing fell short by up to 3 of 256 tokens | Tolerance is the larger of 1 token or 2%, applied to usage and to every length floor |
 | Anchor text equals the reference | Fresh sequential: 24 of 24 matched. With or after concurrent traffic: 7 to 19 of 24 | First 8 characters, finish reason and at least half the reference length |
+| Canaries get 64 tokens | On the MI355X with Qwen3.6-27B, LLMD ignored both `/no_think` and `enable_thinking: false`; all 120 canaries were still reasoning at token 64, so the reference kept none | 1024 tokens (the longest correct canary used 577); reference canaries run 16 at a time |
 
 Because the anchor rule is weaker, a server returning plausible wrong text with the right opening and
 length passes anchors. Canaries are the remaining defense, and they only show that the server
@@ -279,7 +280,7 @@ python tests/e2e/e2e_cuda.py --out <dir> --model-dir <Qwen3-0.6B directory>
 
 | Identity | Value |
 | --- | --- |
-| `workload.json` SHA-256 | `57610a7836543ac39c6cd9ce4907a5c5a7d93f6546f2421f3a6de78c952d79a2` |
+| `workload.json` SHA-256 | `c9470814d97e2cddf10b81e14a6b0ae13ecd67ff997f435804772e42754e0058` |
 | Seed | 20261030 |
 | Debug image | `zmlai/llmd@sha256:752fc2a8a50971a14d2035e653c6c8ddf672d257b3cfed7eb43f216a123bda7c` |
 | Debug model | `Qwen/Qwen3-0.6B`, revision `c1899de289a04d12100db370d81485cdf75e47ca` |

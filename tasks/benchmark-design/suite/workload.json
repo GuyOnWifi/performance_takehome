@@ -20,7 +20,7 @@
     "stream": true,
     "stream_options": { "include_usage": true }
   },
-  "canary": { "prompt_set": "canary", "max_tokens": 64, "min_output_tokens": 1 },
+  "canary": { "prompt_set": "canary", "max_tokens": 1024, "min_output_tokens": 1 },
   "anchor": { "prompt_set": "anchor", "max_tokens": 128, "min_output_tokens": 1, "passes": 2, "match_chars": 8 },
   "cells": {
     "chat_light": {

@@ -516,8 +516,17 @@ async def run_reference(args) -> int:
             "tokens": first.usage_tokens, "finish_reason": first.finish_reason,
             "stable": bool(first.text) and all(o.text == first.text for o in outputs),
         })
-    for prompt in prompts.sets[data["canary"]["prompt_set"]]:
-        output = await generate(prompt, data["canary"], f"c-{prompt['prompt_id']}")
+    # A canary is stable when it answers correctly, not when its text repeats, so unlike anchors
+    # it gains nothing from running alone; thinking models make it long enough to matter.
+    slots = asyncio.Semaphore(16)
+
+    async def canary(prompt: dict[str, Any]) -> Any:
+        async with slots:
+            return await generate(prompt, data["canary"], f"c-{prompt['prompt_id']}")
+
+    canaries = prompts.sets[data["canary"]["prompt_set"]]
+    outputs = await asyncio.gather(*(canary(prompt) for prompt in canaries))
+    for prompt, output in zip(canaries, outputs, strict=True):
         entries.append({
             "model_revision": data["model"]["revision"],
             "prompt_sha256": prompt_hash(prompt["messages"]), "output": output.text,
