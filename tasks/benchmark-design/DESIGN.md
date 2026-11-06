@@ -417,8 +417,9 @@ the full run's reference, `llmd --help` from the image, and the scripts that pla
 `collect/capture.py` and `schemas/` are our own, and `evaluate.py` depends only on the event format, so
 adapting to the released format should mainly touch `analysis/events.py`.
 
-**Integrity:** protected paths show no diff from `81aead8`. `tools.check_integrity --base takehome-start`
-hasn't produced a passing result, because the `takehome-start` tag doesn't exist in this draft. The
+**Integrity:** `python -B -m tools.check_integrity --base 81aead8` passes: protected organizer files are
+unchanged from the starter commit `81aead87d78ed468c4c374fb42921471b44c3f80`. The `takehome-start` tag
+the instructions name doesn't exist in this draft, so the check is given the commit directly. The
 organizer's 40 root tests pass with git tag signing disabled for that one command. With the
 contributor's `tag.gpgsign=true`, 15 of them error, and that also happens on a clean export. The
 enhanced Pi profile wasn't supplied and wasn't used.
@@ -430,8 +431,8 @@ enhanced Pi profile wasn't supplied and wasn't used.
 | Allocated GPU-hours | 0 of 12 |
 | Local RTX 3060 | About 1 h of debug runs, not part of the allowance |
 | Own MI355X, Daytona on-demand | 2.86 sandbox-hours: the full run with setup and the canary fix (2.23 h), a quick run stopped after 10 minutes, and the targeted re-run (0.46 h) |
-| Active hours | To be filled in by the candidate |
-| API charges | To be filled in by the candidate |
+| Active hours | 10 |
+| API charges | $25, for the Daytona MI355X time above |
 
 Cuts: checks with no named failure point were removed, namely stream ordering, model ID matching, a
 token-rate ceiling, and output-difference reporting. Malformed streams now count as ordinary request
